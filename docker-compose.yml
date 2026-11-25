@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      INONDA_DATA_DIR: /repo/data/processed
+      INONDA_CHECKPOINTS: /repo/models/checkpoints
+      INONDA_RESULTS: /repo/evaluation/segmentation_results
+      INONDA_DEV: "false"
+    volumes:
+      - ./data:/repo/data
+      - ./models/checkpoints:/repo/models/checkpoints
+      - ./evaluation:/repo/evaluation
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: inondavision
+      POSTGRES_USER: inonda
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-inonda_dev}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  frontend:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+
+volumes:
+  pgdata:
