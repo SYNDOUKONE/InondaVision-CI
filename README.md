@@ -27,7 +27,7 @@ pré/post (VV/VH dB)          SegFormer (+ baseline        exposure, change), ma
 | Deep Learning     | PyTorch — U-Net, DeepLabV3+, SegFormer     |
 | Raster / vecteur  | Rasterio, Shapely (GDAL), PostGIS ( prévu) |
 | API               | FastAPI + Uvicorn                          |
-| Carto             | Leaflet (frontend), Docker                 |
+| Carto             | React + Tailwind + Leaflet, Docker         |
 
 ## Démarrage rapide
 
@@ -56,13 +56,40 @@ docker compose up --build backend   # API sur :8000
 docker compose up db                # PostGIS sur :5432
 ```
 
+## Dashboard (React + Tailwind)
+
+Interface web en 4 vues (au-dessus de l'API) :
+
+| Vue | Rôle |
+| --- | ---- |
+| 🛰 Satellite Explorer | scènes serveur (pré/post), aperçu VV/VH superposé à la carte |
+| 🤖 AI Detection | lancement de la détection (`scene_id` ou uploads), masques flood + eau permanente |
+| 🌊 Flood Map | carte Leaflet filtrable, export GeoJSON des polygones |
+| 📊 Analytics | superficies avant/après, évolution Δ, répartition des classes |
+
+```bash
+# développement (proxy /api -> :8000)
+cd frontend && npm install && npm run dev
+
+# production : build puis servi par FastAPI ou nginx
+cd frontend && npm run build          # -> frontend/dist
+uvicorn app.main:app --app-dir backend --port 8000   # sert dist auto
+docker compose up --build backend frontend           # nginx sur :8080 (proxy /api)
+```
+
+Le backend ajoute des endpoints pour le dashboard :
+`GET /api/v1/scenarios`, `GET /api/v1/scenes/{id}/preview.png`,
+`POST /api/v1/detect?scene_id=...`.
+
 ## API (extraits)
 
 | Endpoint                | Rôle                                                        |
 | ----------------------- | ----------------------------------------------------------- |
 | `POST /api/v1/detect`   | 2 GeoTIFF VV/VH (pré/post) → masque 3 classes, GeoJSON, hectares |
 | `POST /api/v1/change`   | 2 masques → évolution (nouveau / retiré / persistant)        |
-| `POST /api/v1/exposure` | masque + bâtiments/routes GeoJSON → éléments exposés         |
+| `POST /api/v1/exposure` | masque + bâtiments/routes GeoJSON, ou OSM via `?osm=true&bbox=minlon,minlat,maxlon,maxlat` |
+| `GET  /api/v1/scenarios` | scènes pré/post disponibles côté serveur                    |
+| `GET  /api/v1/scenes/{id}/preview.png` | aperçu PNG d'une scène (bandes VV/VH)           |
 | `GET  /api/v1/health`   | état du service                                             |
 
 En l'absence de checkpoint entraîné, le backend bascule automatiquement sur la

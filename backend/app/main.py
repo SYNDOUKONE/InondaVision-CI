@@ -4,7 +4,7 @@ Lancement :
     uvicorn app.main:app --reload --port 8000    (depuis backend/)
     docker compose up backend                    (à la racine)
 
-La page d'accueil sert la carte Leaflet de démonstration (frontend/).
+La page d'accueil sert le dashboard React (frontend/dist).
 """
 
 import sys
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -37,7 +37,13 @@ app.add_middleware(
 
 app.include_router(flood.router)
 
-
-@app.get("/")
-def index():
-    return FileResponse(REPO_ROOT / "frontend" / "index.html")
+DIST_DIR = REPO_ROOT / "frontend" / "dist"
+if DIST_DIR.exists():
+    app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="dashboard")
+else:
+    @app.get("/")
+    def index():
+        return {
+            "message": "Dashboard non compilé. Exécutez : cd frontend && npm install && npm run build",
+            "api_docs": "/docs",
+        }

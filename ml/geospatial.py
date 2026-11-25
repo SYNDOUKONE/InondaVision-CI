@@ -46,10 +46,10 @@ def mask_to_polygons(mask: np.ndarray, transform, target_class: int = 2,
 
 
 def area_stats(mask: np.ndarray, transform) -> dict:
-    """Superficies par classe, en m², km² et hectares."""
+    """Superficies par classe (fond inclus), en m², km² et hectares."""
     px = pixel_area_m2(transform)
     stats = {}
-    for cls, name in CLASS_NAMES.items():
+    for cls, name in {0: "background", **CLASS_NAMES}.items():
         n = int((mask == cls).sum())
         m2 = n * px
         stats[name] = {

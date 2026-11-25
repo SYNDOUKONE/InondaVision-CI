@@ -8,6 +8,8 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.getenv("INONDA_DATA_DIR", BASE_DIR / "data" / "processed"))
 CHECKPOINTS_DIR = Path(os.getenv("INONDA_CHECKPOINTS", BASE_DIR / "models" / "checkpoints"))
 RESULTS_DIR = Path(os.getenv("INONDA_RESULTS", BASE_DIR / "evaluation" / "segmentation_results"))
+OSM_CACHE_DIR = Path(os.getenv("INONDA_OSM_CACHE", DATA_DIR / "osm_cache"))
+OSM_TIMEOUT = int(os.getenv("INONDA_OSM_TIMEOUT", "90"))
 
 DEFAULT_MODEL = os.getenv("INONDA_MODEL", "unet")
 DEFAULT_CKPT = os.getenv("INONDA_CKPT", str(CHECKPOINTS_DIR / "unet" / "best.pt"))

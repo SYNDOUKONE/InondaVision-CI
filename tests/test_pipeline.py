@@ -3,6 +3,7 @@
     pytest tests/ -v
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -70,3 +71,120 @@ def test_dataset_and_train_smoke(tmp_path):
     data_dir = tmp_path / "ds"
     make_data(data_dir, n_events=3, tiles_per_event=1, size=128)
     _train_tiny(data_dir, epochs=1)
+
+
+def test_osm_parse_overpass_elements():
+    from backend.app.osm import parse_overpass_elements
+
+    elements = [
+        {"type": "way", "id": 1, "tags": {"building": "yes"},
+         "geometry": [{"lat": 5.36, "lon": -3.98}, {"lat": 5.361, "lon": -3.98},
+                      {"lat": 5.361, "lon": -3.979}, {"lat": 5.36, "lon": -3.979},
+                      {"lat": 5.36, "lon": -3.98}]},
+        {"type": "way", "id": 2, "tags": {"highway": "residential"},
+         "geometry": [{"lat": 5.36, "lon": -3.98}, {"lat": 5.365, "lon": -3.978}]},
+        {"type": "node", "id": 3, "tags": {}, "geometry": [{"lat": 5.36, "lon": -3.98}]},
+    ]
+    buildings, roads = parse_overpass_elements(elements)
+    assert len(buildings) == 1 and len(roads) == 1
+    assert buildings[0]["geometry"]["type"] == "Polygon"
+    assert roads[0]["geometry"]["type"] == "LineString"
+
+
+def _abidjan_utm() -> tuple[float, float]:
+    """Coordonnées UTM 30N du centre de Cocody (Abidjan)."""
+    from pyproj import Transformer
+
+    return Transformer.from_crs("EPSG:4326", "EPSG:32630",
+                                always_xy=True).transform(-3.98, 5.36)
+
+
+def test_exposure_with_wgs84_features_over_utm_mask():
+    from rasterio.transform import from_origin
+
+    from backend.app.geospatial import exposure_assessment
+
+    x0, y0 = _abidjan_utm()
+    transform = from_origin(x0 + 1280, y0 + 1280, 10, 10)  # tuile 1280 m x 1280 m
+    mask = np.zeros((256, 256), dtype=np.uint8)
+    mask[100:150, 100:160] = 2  # ~500 m x 600 m inondés
+
+    from pyproj import Transformer
+
+    to_wgs84 = Transformer.from_crs("EPSG:32630", "EPSG:4326", always_xy=True)
+
+    # centre du bloc inondé (pixels 100:150, 100:160) en WGS84
+    cx = x0 + 1280 + 130 * 10
+    cy = y0 + 1280 - 125 * 10
+    clon, clat = to_wgs84.transform(cx, cy)
+
+    def ring(lon0_, lat0_, lon1_, lat1_):
+        return [[[lon0_, lat0_], [lon1_, lat0_], [lon1_, lat1_], [lon0_, lat1_],
+                 [lon0_, lat0_]]]
+
+    buildings = {"type": "FeatureCollection", "features": [
+        {"id": "B1", "geometry": {"type": "Polygon",
+                                 "coordinates": ring(clon - 0.001, clat - 0.001,
+                                                      clon + 0.001, clat + 0.001)}},
+    ]}
+    roads = {"type": "FeatureCollection", "features": [
+        {"id": "R1", "geometry": {"type": "LineString", "coordinates": [
+            [clon - 0.005, clat - 0.005], [clon + 0.005, clat + 0.005]]}},
+    ]}
+
+    res = exposure_assessment(mask, transform, "EPSG:32630", buildings, roads)
+    assert res["buildings_exposed"] == 1
+    assert res["roads_exposed_km"] > 0.1
+    assert res["crs"] == "EPSG:32630"
+
+
+def test_flood_bbox_wgs84():
+    from rasterio.transform import from_origin
+
+    from backend.app.geospatial import flood_bbox_wgs84
+
+    mask = np.zeros((256, 256), dtype=np.uint8)
+    x0, y0 = _abidjan_utm()
+    transform = from_origin(x0, y0, 10, 10)
+    bbox = flood_bbox_wgs84(mask, transform, "EPSG:32630")
+
+    assert bbox[0] < -3.98 < bbox[2]
+    assert bbox[1] < 5.36 < bbox[3]
+
+
+def test_api_dashboard_endpoints(tmp_path):
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    sys.path.insert(0, str(REPO_ROOT / "backend"))
+
+    from scripts.make_synthetic_dataset import main as make_data
+
+    make_data(tmp_path / "ds", n_events=2, tiles_per_event=1, size=128)
+
+    import app.config as cfg
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    cfg.DEFAULT_CKPT = str(REPO_ROOT / "models" / "checkpoints" / "unet" / "best.pt")
+    client = TestClient(app)
+
+    r = client.get("/api/v1/scenarios")
+    assert r.status_code == 200 and r.json()["count"] >= 2
+    sid = r.json()["scenes"][0]["scene_id"]
+    scene = next(s for s in r.json()["scenes"] if s["scene_id"] == sid)
+    assert scene["has_pre"] and scene["has_label"]
+
+    r = client.get(f"/api/v1/scenes/{sid}/preview.png?band=1")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("image/png")
+    bounds = json.loads(r.headers["X-Scene-Bounds"])
+    assert bounds["minlon"] < bounds["maxlon"]
+
+    r = client.post(f"/api/v1/detect?scene_id={sid}&min_area_m2=100")
+    assert r.status_code == 200
+    d = r.json()
+    assert {"background", "permanent_water", "flood_water"} <= set(d["areas"])
+    assert "areas_pre" in d
+
+    r = client.post("/api/v1/detect?min_area_m2=100")
+    assert r.status_code == 422
